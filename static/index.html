@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Zoho Projects Timesheet Portal</title>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <!-- FontAwesome for Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="logo">
+                <i class="fa-solid fa-clock-rotate-left logo-icon"></i>
+                <h2>TimeSync</h2>
+            </div>
+            
+            <div class="sidebar-section">
+                <label for="project-select">Active Project</label>
+                <div class="select-wrapper">
+                    <select id="project-select">
+                        <option value="">Loading Projects...</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="sidebar-section">
+                <label for="user-filter">Assignee Filter</label>
+                <div class="select-wrapper">
+                    <select id="user-filter">
+                        <option value="All" selected>All Team</option>
+                        <option value="Aman">Aman (You)</option>
+                        <option value="Rohan">Rohan</option>
+                        <option value="Aisha">Aisha</option>
+                    </select>
+                </div>
+            </div>
+
+            <nav class="navigation">
+                <a href="#" class="nav-item active" data-view="board">
+                    <i class="fa-solid fa-table-columns"></i> Board View
+                </a>
+                <a href="#" class="nav-item" data-view="timeline">
+                    <i class="fa-solid fa-timeline"></i> Timeline View
+                </a>
+                <a href="#" class="nav-item" data-view="history">
+                    <i class="fa-solid fa-history"></i> Local Logs (<span id="local-logs-count">0</span>)
+                </a>
+            </nav>
+
+            <div class="sidebar-footer">
+                <div class="mode-badge" id="mode-indicator">
+                    <span class="pulse-dot"></span> Mock Mode
+                </div>
+                <button id="toggle-mode-btn" class="secondary-btn" style="margin-top: 10px; width: 100%;">
+                    <i class="fa-solid fa-toggle-on"></i> Switch to Live Zoho
+                </button>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <header class="main-header">
+                <div class="header-title">
+                    <h1 id="view-title">Board View</h1>
+                    <p id="view-subtitle" class="text-secondary">E-Commerce App Redesign</p>
+                </div>
+                
+                <div class="header-actions">
+                    <div class="oauth-box" id="oauth-status-box" style="display: none;">
+                        <button id="auth-zoho-btn" class="primary-btn pulse-glow">
+                            <i class="fa-brands fa-google"></i> Connect Zoho Account
+                        </button>
+                    </div>
+                    <button id="sync-now-btn" class="success-btn">
+                        <i class="fa-solid fa-cloud-arrow-up"></i> Sync to Zoho Projects
+                    </button>
+                    <button id="reconnect-zoho-btn" class="secondary-btn" style="padding: 10px 14px;" title="Reconnect/Switch Zoho Account">
+                        <i class="fa-solid fa-arrows-rotate"></i> Reconnect Zoho
+                    </button>
+                    <button id="theme-toggle-btn" class="secondary-btn" style="padding: 10px 14px;" title="Toggle Dark/Light Mode">
+                        <i class="fa-solid fa-moon"></i>
+                    </button>
+                </div>
+            </header>
+
+            <!-- Dashboard Content Views -->
+            <section class="content-body">
+                <!-- Board View -->
+                <div id="board-view" class="view-panel active">
+                    <div class="board-columns" id="board-columns"></div>
+                </div>
+
+
+
+                <!-- Timeline View -->
+                <div id="timeline-view" class="view-panel">
+                    <div class="card timeline-container">
+                        <div class="timeline-header">
+                            <div class="timeline-task-label-header">Task</div>
+                            <div class="timeline-days-header" id="timeline-days-cols">
+                                <!-- Days columns generated dynamically -->
+                            </div>
+                        </div>
+                        <div id="timeline-tasks-rows" class="timeline-rows">
+                            <!-- Rows generated dynamically -->
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Local Logs History View -->
+                <div id="history-view" class="view-panel">
+                    <div class="card table-container">
+                        <div class="card-header">
+                            <h3>Unsynced Local Timesheets</h3>
+                            <button id="sync-history-btn" class="primary-btn">
+                                <i class="fa-solid fa-rotate"></i> Sync All Pending Logs
+                            </button>
+                        </div>
+                        <table class="table">
+                            <thead>
+                                <tr>
+                                    <th>Project</th>
+                                    <th>Task ID & Name</th>
+                                    <th>Hours</th>
+                                    <th>Type</th>
+                                    <th>Logged Date</th>
+                                    <th>Sync Status</th>
+                                </tr>
+                            </thead>
+                            <tbody id="history-logs-body"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- Time Log Modal -->
+    <div id="time-log-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Log Time</h2>
+                <button class="close-btn" id="close-modal-btn">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="modal-task-details">
+                    <h3 id="modal-task-title">Design Figma Mockups</h3>
+                    <p id="modal-project-title" class="text-secondary">E-Commerce App Redesign</p>
+                    <div id="modal-task-desc-container" style="display: none; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border-color); font-size: 13px;">
+                        <strong style="color: var(--text-secondary);">Description:</strong>
+                        <p id="modal-task-desc" class="text-secondary" style="margin-top: 4px; line-height: 1.4;"></p>
+                    </div>
+                    <div id="modal-attachments-container" style="display: none; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border-color); font-size: 13px;">
+                        <strong style="color: var(--text-secondary);"><i class="fa-solid fa-paperclip"></i> Attachments:</strong>
+                        <div id="modal-attachments-list" style="margin-top: 6px; display: flex; flex-direction: column; gap: 6px;"></div>
+                    </div>
+                </div>
+
+                <!-- Log Type Selection Tabs -->
+                <div class="log-tabs">
+                    <button class="tab-btn active" data-tab="timer">
+                        <i class="fa-solid fa-stopwatch"></i> Stop Watch
+                    </button>
+                    <button class="tab-btn" data-tab="manual">
+                        <i class="fa-solid fa-keyboard"></i> Manual Input
+                    </button>
+                </div>
+
+                <!-- Tab 1: Timer Mode -->
+                <div id="tab-timer" class="tab-content active">
+                    <div class="timer-display">
+                        <span id="timer-text">00:00:00</span>
+                    </div>
+                    <div class="timer-controls">
+                        <button id="timer-start-btn" class="timer-btn play"><i class="fa-solid fa-play"></i> Start</button>
+                        <button id="timer-pause-btn" class="timer-btn pause" disabled><i class="fa-solid fa-pause"></i> Pause</button>
+                        <button id="timer-stop-btn" class="timer-btn stop" disabled><i class="fa-solid fa-stop"></i> Log Time</button>
+                    </div>
+                </div>
+
+                <!-- Tab 2: Manual Log Mode -->
+                <div id="tab-manual" class="tab-content">
+                    <div class="input-grid">
+                        <div class="input-field">
+                            <label for="manual-hours">Total Hours</label>
+                            <input type="number" id="manual-hours" placeholder="e.g. 2.5" min="0.1" step="0.1">
+                        </div>
+                        <div class="input-field">
+                            <label for="manual-start">Start Time</label>
+                            <input type="time" id="manual-start">
+                        </div>
+                        <div class="input-field">
+                            <label for="manual-end">End Time</label>
+                            <input type="time" id="manual-end">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Shared Settings (Notes) -->
+                <div class="shared-fields">
+                    <div class="input-field checkbox-field" style="display: flex; align-items: center; gap: 8px; margin-bottom: 12px;">
+                        <input type="checkbox" id="log-billable" checked style="width: auto; margin: 0; cursor: pointer;">
+                        <label for="log-billable" style="margin: 0; cursor: pointer; font-weight: 500;">Billable</label>
+                    </div>
+                    <div class="input-field full-width">
+                        <label for="log-notes">Notes / Description</label>
+                        <textarea id="log-notes" rows="3" placeholder="What did you work on?"></textarea>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="secondary-btn" id="cancel-log-btn">Cancel</button>
+                <button class="primary-btn" id="save-log-btn">Save Timesheet Entry</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Alert Banner / Toast Notification -->
+    <div id="toast" class="toast"></div>
+
+    <script src="app.js"></script>
+</body>
+</html>
