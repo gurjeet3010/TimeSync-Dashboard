@@ -1,0 +1,22 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Databases
+*.db
+*.sqlite3
+
+# Environments
+.env
+.env.example
+.venv/
+env/
+venv/
+ENV/
+
+# OS-specific
+Thumbs.db
+Desktop.ini
+.DS_Store

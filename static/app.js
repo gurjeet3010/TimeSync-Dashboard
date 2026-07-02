@@ -588,6 +588,7 @@ function openTimeLogModal(task) {
     manualHoursInput.value = "";
     manualStartInput.value = "";
     manualEndInput.value = "";
+    logBillable.checked = true;
     logNotes.value = "";
     
     // Enable/disable buttons
