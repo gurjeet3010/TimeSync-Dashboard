@@ -1,15 +1,18 @@
 import os
+import time
 import sqlite3
 import uvicorn
 import requests
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
+import hashlib
+import json
 
-# Load env variables
-load_dotenv()
+# Load env variables from .env file and override existing ones
+load_dotenv(override=True)
 
 app = FastAPI(title="Zoho Projects Timesheet Dashboard")
 
@@ -21,6 +24,54 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.middleware("http")
+async def check_login(request: Request, call_next):
+    path = request.url.path
+    if path in ["/", "/index.html"]:
+        session_user = request.cookies.get("session_user")
+        if not session_user:
+            return RedirectResponse(url="/login.html")
+    elif path.startswith("/api/") and path != "/api/login":
+        session_user = request.cookies.get("session_user")
+        if not session_user:
+            return JSONResponse(status_code=401, content={"detail": "Unauthorized"})
+    
+    response = await call_next(request)
+    return response
+
+@app.post("/api/login")
+async def api_login(request: Request):
+    data = await request.json()
+    username = data.get("username")
+    password = data.get("password")
+    
+    try:
+        with open("users.json", "r") as f:
+            users = json.load(f)
+    except Exception:
+        users = []
+        
+    password_hash = hashlib.sha256(password.encode()).hexdigest()
+    
+    user_found = None
+    for u in users:
+        if u.get("username") == username and u.get("passwordHash") == password_hash:
+            user_found = u
+            break
+            
+    if not user_found:
+        return JSONResponse(status_code=401, content={"detail": "Invalid username or password"})
+        
+    response = JSONResponse(content={"success": True})
+    response.set_cookie(key="session_user", value=username, max_age=86400, path="/")
+    return response
+
+@app.get("/api/logout")
+def api_logout():
+    response = RedirectResponse(url="/login.html")
+    response.delete_cookie(key="session_user", path="/")
+    return response
 
 DB_PATH = "db.sqlite3"
 
@@ -43,10 +94,37 @@ def init_db():
             status TEXT DEFAULT 'Pending'
         )
     """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS config_store (
+            key TEXT PRIMARY KEY,
+            value TEXT
+        )
+    """)
     conn.commit()
     conn.close()
 
 init_db()
+
+def get_config_value(key: str) -> str:
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("SELECT value FROM config_store WHERE key = ?", (key,))
+        row = cursor.fetchone()
+        conn.close()
+        return row[0] if row else None
+    except Exception:
+        return None
+
+def set_config_value(key: str, value: str):
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("INSERT OR REPLACE INTO config_store (key, value) VALUES (?, ?)", (key, str(value)))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"Error setting config value {key}: {e}")
 
 # --- Zoho OAuth Configuration Helpers ---
 def get_env_value(key: str) -> str:
@@ -83,6 +161,19 @@ def update_env_file(key: str, value: str):
 
 # Helper to exchange code/refresh token for access token
 def get_access_token():
+    # 1. Check persistent SQLite cache first
+    cached_token = get_config_value("zoho_access_token")
+    cached_expires = get_config_value("zoho_token_expires_at")
+    
+    if cached_token and cached_expires:
+        try:
+            expires_at = float(cached_expires)
+            if time.time() < expires_at - 60:
+                return cached_token
+        except ValueError:
+            pass
+            
+    # 2. If expired or missing, refresh from Zoho using refresh_token
     refresh_token = get_env_value("ZOHO_REFRESH_TOKEN")
     client_id = get_env_value("ZOHO_CLIENT_ID")
     client_secret = get_env_value("ZOHO_CLIENT_SECRET")
@@ -102,11 +193,17 @@ def get_access_token():
     }
     
     try:
-        response = requests.post(url, data=params)
+        response = requests.post(url, data=params, timeout=10)
         data = response.json()
         if "access_token" in data:
-            update_env_file("ZOHO_ACCESS_TOKEN", data["access_token"])
-            return data["access_token"]
+            access_token = data["access_token"]
+            expires_in = data.get("expires_in", 3600)
+            expires_at = time.time() + expires_in
+            
+            # Save to persistent SQLite cache
+            set_config_value("zoho_access_token", access_token)
+            set_config_value("zoho_token_expires_at", str(expires_at))
+            return access_token
     except Exception as e:
         print("Error refreshing access token:", e)
     return None
@@ -134,17 +231,17 @@ MOCK_PROJECTS = [
 
 MOCK_TASKS = {
     "p1": [
-        {"id": "t101", "name": "Design Figma Mockups", "status": "In Progress", "assignee": "Aman", "start_date": "2026-07-01", "end_date": "2026-07-05", "description": "Create high-fidelity mockups for landing page and dashboard. Ensure it has luxury aesthetic."},
-        {"id": "t102", "name": "Setup Database Schema", "status": "To Do", "assignee": "Aman", "start_date": "2026-07-03", "end_date": "2026-07-06", "description": ""},
-        {"id": "t103", "name": "Frontend Boilerplate Setup", "status": "Done", "assignee": "Rohan", "start_date": "2026-06-28", "end_date": "2026-06-30", "description": "Initialize react app with vite, setup tailwind CSS, folder structure, router and basic layout."},
-        {"id": "t104", "name": "Stripe Payment Gateway Integration", "status": "Review", "assignee": "Aman", "start_date": "2026-07-04", "end_date": "2026-07-08", "description": ""}
+        {"id": "t101", "name": "Design Figma Mockups", "status": "In Progress", "assignee": "Aman", "start_date": "2026-07-01", "end_date": "2026-07-05", "description": "Create high-fidelity mockups for landing page and dashboard. Ensure it has luxury aesthetic.", "priority": "High"},
+        {"id": "t102", "name": "Setup Database Schema", "status": "To Do", "assignee": "Aman", "start_date": "2026-07-03", "end_date": "2026-07-06", "description": "", "priority": "Medium"},
+        {"id": "t103", "name": "Frontend Boilerplate Setup", "status": "Done", "assignee": "Rohan", "start_date": "2026-06-28", "end_date": "2026-06-30", "description": "Initialize react app with vite, setup tailwind CSS, folder structure, router and basic layout.", "priority": "None"},
+        {"id": "t104", "name": "Stripe Payment Gateway Integration", "status": "Review", "assignee": "Aman", "start_date": "2026-07-04", "end_date": "2026-07-08", "description": "", "priority": "High"}
     ],
     "p2": [
-        {"id": "t201", "name": "Zoho OAuth Configuration", "status": "In Progress", "assignee": "Aman", "start_date": "2026-07-01", "end_date": "2026-07-03", "description": "Setup Zoho console, handle redirection, exchange tokens and implement token refresh callback."},
-        {"id": "t202", "name": "Sync Timesheets API", "status": "To Do", "assignee": "Rohan", "start_date": "2026-07-02", "end_date": "2026-07-07", "description": ""}
+        {"id": "t201", "name": "Zoho OAuth Configuration", "status": "In Progress", "assignee": "Aman", "start_date": "2026-07-01", "end_date": "2026-07-03", "description": "Setup Zoho console, handle redirection, exchange tokens and implement token refresh callback.", "priority": "Medium"},
+        {"id": "t202", "name": "Sync Timesheets API", "status": "To Do", "assignee": "Rohan", "start_date": "2026-07-02", "end_date": "2026-07-07", "description": "", "priority": "High"}
     ],
     "p3": [
-        {"id": "t301", "name": "SEO & Content Writing", "status": "To Do", "assignee": "Aisha", "start_date": "2026-07-01", "end_date": "2026-07-02", "description": "Optimize content keywords, meta descriptions and run Google Lighthouse audits."}
+        {"id": "t301", "name": "SEO & Content Writing", "status": "To Do", "assignee": "Aisha", "start_date": "2026-07-01", "end_date": "2026-07-02", "description": "Optimize content keywords, meta descriptions and run Google Lighthouse audits.", "priority": "Low"}
     ]
 }
 
@@ -209,7 +306,26 @@ def get_projects():
 def get_tasks(project_id: str = Query(...)):
     is_mock = get_env_value("MOCK_MODE") == "True"
     if is_mock:
-        return MOCK_TASKS.get(project_id, [])
+        if project_id == "All":
+            all_tasks = []
+            for pid, tasks_list in MOCK_TASKS.items():
+                pname = next((p["name"] for p in MOCK_PROJECTS if p["id"] == pid), "Active Project")
+                for t in tasks_list:
+                    t_copy = t.copy()
+                    t_copy["project_id"] = pid
+                    t_copy["project_name"] = pname
+                    all_tasks.append(t_copy)
+            return all_tasks
+        else:
+            pname = next((p["name"] for p in MOCK_PROJECTS if p["id"] == project_id), "Active Project")
+            tasks_list = MOCK_TASKS.get(project_id, [])
+            all_tasks = []
+            for t in tasks_list:
+                t_copy = t.copy()
+                t_copy["project_id"] = project_id
+                t_copy["project_name"] = pname
+                all_tasks.append(t_copy)
+            return all_tasks
         
     token = get_access_token()
     if not token:
@@ -220,48 +336,66 @@ def get_tasks(project_id: str = Query(...)):
          raise HTTPException(status_code=400, detail="Unable to fetch Zoho Portal ID.")
          
     domain = get_zoho_domain()
-    url = f"https://projectsapi.zoho.{domain}/restapi/portal/{portal_id}/projects/{project_id}/tasks/"
+    
+    project_ids = []
+    projects = []
+    try:
+        projects = get_projects()
+        if project_id == "All":
+            project_ids = [p["id"] for p in projects]
+        else:
+            project_ids = [project_id]
+    except Exception as e:
+        print("Error retrieving projects inside get_tasks:", e)
+        raise HTTPException(status_code=500, detail=f"Failed to fetch projects: {str(e)}")
+        
+    tasks = []
     headers = {"Authorization": f"Zoho-oauthtoken {token}"}
     
-    try:
-        res = requests.get(url, headers=headers)
-        if res.status_code == 204 or not res.text.strip():
-            return []
-        res_data = res.json()
-        tasks = []
-        for t in res_data.get("tasks", []):
-            # Parse status
-            status_name = t.get("status", {}).get("name", "To Do")
-            
-            # Try to get assignee from custom fields (Assigned User)
-            custom_assignee = None
-            for cf in t.get("custom_fields", []):
-                if cf.get("label_name") == "Assigned User" and cf.get("value"):
-                    custom_assignee = cf.get("value")
-                    break
-            
-            if custom_assignee:
-                assignee_name = custom_assignee
-            else:
-                # Fall back to associates or owner details
-                assignee_name = "Unassigned"
-                if t.get("associates"):
-                    assignee_name = t["associates"][0].get("name", "Unassigned")
-                elif t.get("details", {}).get("owners"):
-                    assignee_name = t["details"]["owners"][0].get("name", "Unassigned")
+    for pid in project_ids:
+        url = f"https://projectsapi.zoho.{domain}/restapi/portal/{portal_id}/projects/{pid}/tasks/"
+        pname = next((p["name"] for p in projects if p["id"] == pid), "Active Project")
+        try:
+            res = requests.get(url, headers=headers)
+            if res.status_code == 204 or not res.text.strip():
+                continue
+            res_data = res.json()
+            for t in res_data.get("tasks", []):
+                status_name = t.get("status", {}).get("name", "To Do")
                 
-            tasks.append({
-                "id": str(t["id"]),
-                "name": t["name"],
-                "status": status_name,
-                "assignee": assignee_name,
-                "start_date": t.get("start_date", ""),
-                "end_date": t.get("end_date", ""),
-                "description": t.get("description", "")
-            })
-        return tasks
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to fetch Zoho tasks: {str(e)}")
+                custom_assignee = None
+                for cf in t.get("custom_fields", []):
+                    if cf.get("label_name") == "Assigned User" and cf.get("value"):
+                        custom_assignee = cf.get("value")
+                        break
+                
+                if custom_assignee:
+                    assignee_name = custom_assignee
+                else:
+                    assignee_name = "Unassigned"
+                    if t.get("associates"):
+                        assignee_name = t["associates"][0].get("name", "Unassigned")
+                    elif t.get("details", {}).get("owners"):
+                        assignee_name = t["details"]["owners"][0].get("name", "Unassigned")
+                    
+                tasks.append({
+                    "id": str(t["id"]),
+                    "name": t["name"],
+                    "status": status_name,
+                    "assignee": assignee_name,
+                    "start_date": t.get("start_date", ""),
+                    "end_date": t.get("end_date", ""),
+                    "description": t.get("description", ""),
+                    "priority": t.get("priority", "None"),
+                    "project_id": str(pid),
+                    "project_name": pname
+                })
+        except Exception as e:
+            print(f"Failed to fetch Zoho tasks for project {pid}: {str(e)}")
+            continue
+            
+    return tasks
+
 
 @app.get("/api/tasks/{project_id}/{task_id}/attachments")
 def get_task_attachments(project_id: str, task_id: str):
@@ -342,16 +476,44 @@ async def create_log(request: Request):
     if not task_id or hours <= 0:
         raise HTTPException(status_code=400, detail="Invalid log data.")
 
+    from datetime import datetime, timezone, timedelta
+    ist_timezone = timezone(timedelta(hours=5, minutes=30))
+    logged_at_ist = datetime.now(ist_timezone).strftime("%Y-%m-%d %H:%M:%S")
+
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("""
-        INSERT INTO time_logs (task_id, task_name, project_id, project_name, user_email, hours, billable, rate, notes)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (task_id, task_name, project_id, project_name, user_email, hours, billable, rate, notes))
+        INSERT INTO time_logs (task_id, task_name, project_id, project_name, user_email, hours, billable, rate, notes, logged_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (task_id, task_name, project_id, project_name, user_email, hours, billable, rate, notes, logged_at_ist))
     conn.commit()
     conn.close()
     
     return {"status": "success"}
+
+@app.post("/api/logs/delete/{log_id}")
+def delete_log(log_id: int):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM time_logs WHERE id = ? AND status = 'Pending'", (log_id,))
+    conn.commit()
+    conn.close()
+    return {"status": "success"}
+
+def get_display_name(email: str) -> str:
+    email_lower = email.lower() if email else ""
+    if "kaurgurjeet3010" in email_lower or "gurjeet" in email_lower:
+        return "Gurjeet Kaur"
+    if "vindhya" in email_lower:
+        return "Vindhya Kesharwani"
+    if "aashay" in email_lower:
+        return "Aashay Soni"
+    if "rahul" in email_lower:
+        return "Rahul Patel"
+        
+    # Dynamic fallback to format any other email address
+    clean_name = email_lower.split("@")[0].replace(".", " ").replace("-", " ").replace("_", " ")
+    return " ".join(word.capitalize() for word in clean_name.split())
 
 @app.post("/api/sync")
 def sync_logs():
@@ -396,15 +558,26 @@ def sync_logs():
             from datetime import datetime
             date_str = datetime.now().strftime("%m-%d-%Y")
             
+            # Determine display name from logged email
+            display_name = get_display_name(user_email)
+            log_notes = f"[{display_name}] {notes}" if notes else f"[{display_name}] Logged via Dashboard"
+            
             # Post time log to Zoho Projects task
             url = f"https://projectsapi.zoho.{domain}/restapi/portal/{portal_id}/projects/{project_id}/tasks/{task_id}/logs/"
             headers = {"Authorization": f"Zoho-oauthtoken {token}"}
+            # Always billable
             payload = {
                 "date": date_str,
                 "hours": hours_str,
-                "notes": notes or "Logged via Timesheet Dashboard",
-                "bill_status": "Billable" if billable else "Non-Billable"
+                "notes": log_notes,
+                "bill_status": "Billable"
             }
+            
+            # Map Assigned User to Zoho Custom Field if configured in .env
+            import json
+            assigned_user_key = get_env_value("ZOHO_ASSIGNED_USER_FIELD_KEY")
+            if assigned_user_key:
+                payload["custom_fields"] = json.dumps({assigned_user_key: display_name})
             
             try:
                 res = requests.post(url, data=payload, headers=headers)
@@ -478,7 +651,13 @@ def oauth_callback(code: str = None, error: str = None):
         if "refresh_token" in data:
             update_env_file("ZOHO_REFRESH_TOKEN", data["refresh_token"])
             if "access_token" in data:
-                update_env_file("ZOHO_ACCESS_TOKEN", data["access_token"])
+                access_token = data["access_token"]
+                expires_in = data.get("expires_in", 3600)
+                expires_at = time.time() + expires_in
+                
+                # Save to SQLite persistent store
+                set_config_value("zoho_access_token", access_token)
+                set_config_value("zoho_token_expires_at", str(expires_at))
             # Turn mock mode off as they successfully authorized
             update_env_file("MOCK_MODE", "False")
             

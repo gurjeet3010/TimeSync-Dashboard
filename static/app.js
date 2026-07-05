@@ -21,8 +21,6 @@ const projectSelect = document.getElementById("project-select");
 const userFilter = document.getElementById("user-filter");
 const viewTitle = document.getElementById("view-title");
 const viewSubtitle = document.getElementById("view-subtitle");
-const toggleModeBtn = document.getElementById("toggle-mode-btn");
-const modeIndicator = document.getElementById("mode-indicator");
 const oauthStatusBox = document.getElementById("oauth-status-box");
 const authZohoBtn = document.getElementById("auth-zoho-btn");
 const syncNowBtn = document.getElementById("sync-now-btn");
@@ -36,7 +34,6 @@ const cancelLogBtn = document.getElementById("cancel-log-btn");
 const saveLogBtn = document.getElementById("save-log-btn");
 const modalTaskTitle = document.getElementById("modal-task-title");
 const modalProjectTitle = document.getElementById("modal-project-title");
-const logBillable = document.getElementById("log-billable");
 const logNotes = document.getElementById("log-notes");
 
 // Timer Elements
@@ -69,10 +66,15 @@ function setupEventListeners() {
     // Project switcher
     projectSelect.addEventListener("change", (e) => {
         state.selectedProjectId = e.target.value;
-        const project = state.projects.find(p => p.id === state.selectedProjectId);
-        if (project) {
-            viewSubtitle.innerText = project.name;
-            fetchTasks(state.selectedProjectId);
+        if (state.selectedProjectId === "All") {
+            viewSubtitle.innerText = "All Projects";
+            fetchTasks("All");
+        } else {
+            const project = state.projects.find(p => p.id === state.selectedProjectId);
+            if (project) {
+                viewSubtitle.innerText = project.name;
+                fetchTasks(state.selectedProjectId);
+            }
         }
     });
 
@@ -95,7 +97,6 @@ function setupEventListeners() {
             const titles = {
                 board: "Board View",
                 list: "List View",
-                timeline: "Timeline View",
                 history: "Local Logs History"
             };
             viewTitle.innerText = titles[state.activeView];
@@ -107,20 +108,7 @@ function setupEventListeners() {
         });
     });
 
-    // Toggle Mock/Real Mode
-    toggleModeBtn.addEventListener("click", async () => {
-        try {
-            const res = await fetch("/api/toggle-mode", { method: "POST" });
-            const data = await res.json();
-            if (!res.ok) {
-                throw new Error(data.detail || "Failed to switch mode");
-            }
-            showToast(data.mock_mode ? "Switched to Mock Mode" : "Switched to Live Zoho Mode", "success");
-            await initApp();
-        } catch (err) {
-            showToast(err.message || "Authorize Zoho Projects first before switching to Live Mode!", "error");
-        }
-    });
+
 
     // Auth Zoho Redirect
     authZohoBtn.addEventListener("click", () => {
@@ -205,16 +193,7 @@ async function fetchConfig() {
         const res = await fetch("/api/config");
         state.config = await res.json();
         
-        // Mode badge update
-        if (state.config.mock_mode) {
-            modeIndicator.className = "mode-badge";
-            modeIndicator.innerHTML = '<span class="pulse-dot"></span> Mock Mode';
-            toggleModeBtn.innerHTML = '<i class="fa-solid fa-toggle-on"></i> Switch to Live Zoho';
-        } else {
-            modeIndicator.className = "mode-badge live-mode";
-            modeIndicator.innerHTML = '<span class="pulse-dot" style="background-color: var(--success)"></span> Live Zoho Mode';
-            toggleModeBtn.innerHTML = '<i class="fa-solid fa-toggle-off"></i> Switch to Mock Mode';
-        }
+
 
         // Show/hide oauth link button
         if (!state.config.is_authorized) {
@@ -245,6 +224,12 @@ async function fetchProjects() {
             return;
         }
         
+        // Add "All Projects" option
+        const allOpt = document.createElement("option");
+        allOpt.value = "All";
+        allOpt.innerText = "All Projects";
+        projectSelect.appendChild(allOpt);
+        
         state.projects.forEach(p => {
             const opt = document.createElement("option");
             opt.value = p.id;
@@ -252,10 +237,10 @@ async function fetchProjects() {
             projectSelect.appendChild(opt);
         });
         
-        // Set first project as active and fetch its tasks
-        state.selectedProjectId = state.projects[0].id;
-        viewSubtitle.innerText = state.projects[0].name;
-        await fetchTasks(state.selectedProjectId);
+        // Default to "All Projects"
+        state.selectedProjectId = "All";
+        viewSubtitle.innerText = "All Projects";
+        await fetchTasks("All");
     } catch (e) {
         console.error("Projects load error:", e);
         projectSelect.innerHTML = '<option value="">Error Loading Projects</option>';
@@ -351,8 +336,6 @@ function renderActiveView() {
         renderBoardView(filteredTasks);
     } else if (state.activeView === "list") {
         renderListView(filteredTasks);
-    } else if (state.activeView === "timeline") {
-        renderTimelineView(filteredTasks);
     } else if (state.activeView === "history") {
         renderHistoryLogs();
     }
@@ -416,11 +399,12 @@ function renderBoardView(filteredTasks) {
         card.className = "card task-card";
         card.innerHTML = `
             <div class="task-card-header">
+                ${task.project_name ? `<span class="project-badge-tag" style="font-size: 10.5px; font-weight: 700; color: var(--primary); background-color: rgba(219, 244, 167, 0.08); border: 1px solid rgba(219, 244, 167, 0.18); padding: 2px 6px; border-radius: 4px; display: inline-block; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.3px;"><i class="fa-solid fa-folder" style="font-size: 9px; margin-right: 4px;"></i>${task.project_name}</span>` : ''}
                 <h4 class="task-card-title">${task.name}</h4>
             </div>
             <div class="task-card-footer">
-                <span class="assignee-tag"><i class="fa-solid fa-user"></i> ${task.assignee}</span>
-                <span class="status-badge ${task.status.toLowerCase().replace(" ", "-")}">${task.status}</span>
+                <span class="assignee-tag" title="${task.assignee}"><i class="fa-solid fa-user"></i> ${task.assignee}</span>
+                ${task.priority && task.priority !== 'None' ? `<span class="priority-tag ${task.priority.toLowerCase()}"><i class="fa-solid fa-circle-exclamation"></i> ${task.priority}</span>` : ''}
             </div>
         `;
         
@@ -445,7 +429,10 @@ function renderListView(filteredTasks) {
         const row = document.createElement("tr");
         row.innerHTML = `
             <td><code>${task.id}</code></td>
-            <td><strong>${task.name}</strong></td>
+            <td>
+                <strong>${task.name}</strong>
+                ${task.priority && task.priority !== 'None' ? `<span class="priority-tag ${task.priority.toLowerCase()}" style="margin-left: 8px; font-size: 9.5px; font-weight: 700; padding: 2px 6px; border-radius: 4px; text-transform: uppercase; letter-spacing: 0.3px; display: inline-flex; align-items: center; gap: 4px;"><i class="fa-solid fa-circle-exclamation" style="font-size: 8.5px;"></i> ${task.priority}</span>` : ''}
+            </td>
             <td>${task.assignee}</td>
             <td><span class="status-badge ${task.status.toLowerCase().replace(" ", "-")}">${task.status}</span></td>
             <td class="text-secondary">${task.start_date || 'N/A'} to ${task.end_date || 'N/A'}</td>
@@ -459,71 +446,25 @@ function renderListView(filteredTasks) {
     });
 }
 
-// Timeline View renderer (Interactive Gantt layout)
-function renderTimelineView(filteredTasks) {
-    const daysCols = document.getElementById("timeline-days-cols");
-    const tasksRows = document.getElementById("timeline-tasks-rows");
-    
-    daysCols.innerHTML = "";
-    tasksRows.innerHTML = "";
-    
-    // We will display a 10-day timeline starting from 2026-06-28 to 2026-07-07
-    const startDate = new Date("2026-06-28");
-    const totalDays = 10;
-    
-    // Generate Day headers
-    for (let i = 0; i < totalDays; i++) {
-        const current = new Date(startDate);
-        current.setDate(startDate.getDate() + i);
-        
-        const dayStr = current.getDate();
-        const monthStr = current.toLocaleString('default', { month: 'short' });
-        
-        const col = document.createElement("div");
-        col.className = "timeline-day-col";
-        // Mark 2026-07-01 (mock current date) as today
-        if (current.getDate() === 1 && current.getMonth() === 6) {
-            col.className += " today";
-            col.innerHTML = `<strong>1 Jul</strong>`;
-        } else {
-            col.innerHTML = `${dayStr} ${monthStr}`;
-        }
-        daysCols.appendChild(col);
+
+
+function getDisplayName(email) {
+    if (!email) return "Unknown";
+    const emailLower = email.toLowerCase();
+    if (emailLower.includes("kaurgurjeet3010") || emailLower.includes("gurjeet")) {
+        return "Gurjeet Kaur";
     }
-    
-    if (filteredTasks.length === 0) {
-        tasksRows.innerHTML = `<div style="text-align: center; padding: 20px;" class="text-secondary">No tasks available for timeline.</div>`;
-        return;
+    if (emailLower.includes("vindhya")) {
+        return "Vindhya Kesharwani";
     }
-    
-    filteredTasks.forEach(task => {
-        if (!task.start_date || !task.end_date) return;
-        
-        const row = document.createElement("div");
-        row.className = "timeline-row";
-        
-        // Calculate offset and width of the Gantt bar
-        const tStart = new Date(task.start_date);
-        const tEnd = new Date(task.end_date);
-        
-        const msPerDay = 24 * 60 * 60 * 1000;
-        const startDiffDays = (tStart - startDate) / msPerDay;
-        const durationDays = ((tEnd - tStart) / msPerDay) + 1;
-        
-        // Bar position values (column width is 80px)
-        const leftOffset = Math.max(0, startDiffDays * 80);
-        const barWidth = Math.max(80, durationDays * 80);
-        
-        row.innerHTML = `
-            <div class="timeline-task-label" title="${task.name}">${task.name}</div>
-            <div class="timeline-bar-container">
-                <div class="timeline-bar" style="left: ${leftOffset}px; width: ${barWidth}px;" onclick="openTimeLogModalById('${task.id}')">
-                    <span>${durationDays}d</span>
-                </div>
-            </div>
-        `;
-        tasksRows.appendChild(row);
-    });
+    if (emailLower.includes("aashay")) {
+        return "Aashay Soni";
+    }
+    if (emailLower.includes("rahul")) {
+        return "Rahul Patel";
+    }
+    const parts = emailLower.split("@")[0].split(/[\.\-_]/);
+    return parts.map(p => p.charAt(0).toUpperCase() + p.slice(1)).join(" ");
 }
 
 // Local logs history table renderer
@@ -532,28 +473,53 @@ function renderHistoryLogs() {
     logsBody.innerHTML = "";
     
     if (state.logs.length === 0) {
-        logsBody.innerHTML = `<tr><td colspan="6" style="text-align: center;" class="text-secondary">No saved logs in SQLite. Create logs using task cards.</td></tr>`;
+        logsBody.innerHTML = `<tr><td colspan="7" style="text-align: center;" class="text-secondary">No saved logs in SQLite. Create logs using task cards.</td></tr>`;
         return;
     }
     
     state.logs.forEach(log => {
         const row = document.createElement("tr");
         row.innerHTML = `
-            <td><strong>${log.project_name || 'Project'}</strong></td>
-            <td><code>${log.task_id}</code> - ${log.task_name || 'Task'}</td>
-            <td><strong>${log.hours.toFixed(2)} hrs</strong></td>
-            <td>${log.billable ? '<span class="status-badge done">Billable</span>' : '<span class="status-badge to-do">Non-Billable</span>'}</td>
-            <td class="text-secondary">${new Date(log.logged_at).toLocaleString()}</td>
-            <td>
-                <span class="sync-status ${log.status}">
-                    <i class="fa-solid ${log.status === 'Synced' ? 'fa-circle-check' : 'fa-circle-notch fa-spin'}"></i>
-                    ${log.status}
-                </span>
+            <td class="col-project"><strong>${log.project_name || 'Project'}</strong></td>
+            <td class="col-task">${log.task_name || 'Task'}</td>
+            <td class="col-user"><strong>${getDisplayName(log.user_email)}</strong></td>
+            <td class="col-hours"><strong>${log.hours.toFixed(2)} hrs</strong></td>
+            <td class="col-type">${log.billable ? '<span class="status-badge done">Billable</span>' : '<span class="status-badge to-do">Non-Billable</span>'}</td>
+            <td class="col-date text-secondary">${new Date(log.logged_at).toLocaleString()}</td>
+            <td class="col-status">
+                <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%;">
+                    <span class="sync-status ${log.status}">
+                        <i class="fa-solid ${log.status === 'Synced' ? 'fa-circle-check' : 'fa-circle-notch fa-spin'}"></i>
+                        ${log.status}
+                    </span>
+                    ${log.status === 'Pending' ? `
+                        <button class="primary-btn btn-sm delete-log-btn" style="background: rgba(239, 22, 22, 0.1); color: #ff4a4a; border: 1px solid rgba(239, 22, 22, 0.2); padding: 4px 8px; border-radius: 6px; cursor: pointer; transition: 0.2s;" onclick="deletePendingLog(${log.id})">
+                            <i class="fa-solid fa-trash" style="font-size: 10px;"></i>
+                        </button>
+                    ` : ''}
+                </div>
             </td>
         `;
         logsBody.appendChild(row);
     });
 }
+
+// Delete pending log handler
+window.deletePendingLog = async function(logId) {
+    if (!confirm("Are you sure you want to delete this pending log?")) return;
+    try {
+        const res = await fetch(`/api/logs/delete/${logId}`, { method: "POST" });
+        if (res.ok) {
+            showToast("Pending log deleted successfully.", "success");
+            fetchLogs(); // Reload logs list from server
+        } else {
+            showToast("Failed to delete pending log.", "error");
+        }
+    } catch (err) {
+        console.error(err);
+        showToast("Error deleting log.", "error");
+    }
+};
 
 // Helper to open modal using Task ID
 window.openTimeLogModalById = function(taskId) {
@@ -588,8 +554,31 @@ function openTimeLogModal(task) {
     manualHoursInput.value = "";
     manualStartInput.value = "";
     manualEndInput.value = "";
-    logBillable.checked = true;
     logNotes.value = "";
+    
+    // Dynamically populate Log As User options based on task assignees
+    const logUserSelect = document.getElementById("log-user");
+    if (logUserSelect) {
+        logUserSelect.innerHTML = "";
+        const allPossibleUsers = ["Gurjeet Kaur", "Vindhya Kesharwani", "Aashay Soni", "Rahul Patel"];
+        
+        const assigneesStr = task.assignee || "";
+        const taskAssignees = assigneesStr.split(",")
+            .map(a => a.trim())
+            .filter(a => a && a !== "Unassigned");
+            
+        const validAssignees = taskAssignees.filter(a => allPossibleUsers.includes(a));
+        const finalUsers = validAssignees.length > 0 ? validAssignees : allPossibleUsers;
+        
+        finalUsers.forEach(user => {
+            const opt = document.createElement("option");
+            opt.value = user;
+            opt.innerText = user;
+            logUserSelect.appendChild(opt);
+        });
+        
+        logUserSelect.value = finalUsers[0];
+    }
     
     // Enable/disable buttons
     timerStartBtn.disabled = false;
@@ -746,15 +735,23 @@ async function saveTimesheetLog() {
         return;
     }
     
+    const selectedUserName = document.getElementById("log-user").value || "Gurjeet Kaur";
+    let userEmail = "";
+    if (selectedUserName === "Gurjeet Kaur") {
+        userEmail = "kaurgurjeet3010@gmail.com";
+    } else {
+        userEmail = `${selectedUserName.toLowerCase().replace(/\s+/g, "")}@company.com`;
+    }
+    
     const project = state.projects.find(p => p.id === state.selectedProjectId);
     const payload = {
         task_id: state.selectedTask.id,
         task_name: state.selectedTask.name,
-        project_id: state.selectedProjectId,
-        project_name: project ? project.name : "Active Project",
-        user_email: `${state.activeAssignee.toLowerCase()}@company.com`,
+        project_id: state.selectedTask.project_id || state.selectedProjectId,
+        project_name: state.selectedTask.project_name || (project ? project.name : "Active Project"),
+        user_email: userEmail,
         hours: hours,
-        billable: logBillable.checked ? 1 : 0,
+        billable: 1,
         rate: 0.0,
         notes: logNotes.value
     };

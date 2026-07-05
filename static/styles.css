@@ -517,6 +517,7 @@ button {
 }
 
 .task-card {
+    padding: 16px;
     cursor: pointer;
 }
 
@@ -528,14 +529,14 @@ button {
 }
 
 .task-card-header {
-    margin-bottom: 14px;
+    margin-bottom: 12px;
 }
 
 .task-card-title {
     font-family: var(--font-heading);
-    font-size: 15px;
+    font-size: 14.5px;
     font-weight: 600;
-    line-height: 1.45;
+    line-height: 1.4;
     color: var(--text-primary);
 }
 
@@ -543,23 +544,54 @@ button {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    font-size: 12.5px;
+    font-size: 12px;
     border-top: 1px solid var(--border-color);
-    padding-top: 14px;
-    margin-top: 14px;
+    padding-top: 12px;
+    margin-top: 12px;
 }
 
 .assignee-tag {
-    display: flex;
+    display: inline-flex;
     align-items: center;
     gap: 8px;
     color: var(--text-secondary);
     font-weight: 600;
+    max-width: 65%;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .assignee-tag i {
     font-size: 12px;
     color: var(--text-muted);
+}
+
+.priority-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 8px;
+    border-radius: 6px;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+.priority-tag.high {
+    background-color: rgba(239, 22, 22, 0.08);
+    color: #ff4a4a;
+    border: 1px solid rgba(239, 22, 22, 0.2);
+}
+.priority-tag.medium {
+    background-color: rgba(255, 200, 87, 0.08);
+    color: #ffc857;
+    border: 1px solid rgba(255, 200, 87, 0.2);
+}
+.priority-tag.low {
+    background-color: rgba(143, 166, 203, 0.08);
+    color: #8fa6cb;
+    border: 1px solid rgba(143, 166, 203, 0.2);
 }
 
 .status-badge {
@@ -587,7 +619,9 @@ button {
 
 .table-container {
     padding: 0;
-    overflow: hidden;
+    overflow-y: auto;
+    overflow-x: auto;
+    max-height: 380px;
     background-color: var(--bg-card);
     box-shadow: var(--shadow-md);
     border-radius: 16px;
@@ -1158,4 +1192,43 @@ input:checked + .slider:before {
 .attachment-item:hover .attachment-download {
     color: var(--primary);
     transform: translateY(1px);
+}
+
+/* Standard Table Layout with Uniform Cell Borders */
+.table {
+    table-layout: fixed;
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.table th, .table td {
+    display: table-cell !important;
+    padding: 16px 20px;
+    box-sizing: border-box;
+    text-align: left;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.table tr:last-child td {
+    border-bottom: none;
+}
+
+.table td {
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* Specific Column Widths */
+.col-project { width: 16%; }
+.col-task { width: 22%; }
+.col-user { width: 14%; }
+.col-hours { width: 10%; }
+.col-type { width: 10%; }
+.col-date { width: 16%; }
+.col-status { width: 12%; }
+
+.table-scroll-wrapper {
+    scrollbar-gutter: stable;
 }
