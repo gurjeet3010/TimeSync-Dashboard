@@ -52,14 +52,35 @@ const toast = document.getElementById("toast");
 
 // Initialize Application
 document.addEventListener("DOMContentLoaded", () => {
+    const sidebarCollapsed = localStorage.getItem("sidebarCollapsed") === "true";
+    if (sidebarCollapsed) {
+        document.querySelector(".app-container").classList.add("sidebar-collapsed");
+    }
     initApp();
     setupEventListeners();
 });
 
 async function initApp() {
+    await fetchCurrentUser();
     await fetchConfig();
     await fetchProjects();
     await fetchLogs();
+}
+
+async function fetchCurrentUser() {
+    try {
+        const res = await fetch("/api/me");
+        if (res.ok) {
+            state.currentUser = await res.json();
+            if (state.currentUser.username === "admin") {
+                state.activeAssignee = "All";
+            } else {
+                state.activeAssignee = state.currentUser.displayName;
+            }
+        }
+    } catch (e) {
+        console.error("Error fetching current user:", e);
+    }
 }
 
 function setupEventListeners() {
@@ -156,6 +177,35 @@ function setupEventListeners() {
     syncNowBtn.addEventListener("click", triggerSync);
     syncHistoryBtn.addEventListener("click", triggerSync);
 
+    // History Panel Controls
+    const historyUserFilter = document.getElementById("history-user-filter");
+    if (historyUserFilter) {
+        historyUserFilter.addEventListener("change", () => {
+            renderHistoryLogs();
+        });
+    }
+
+    const resetHistoryBtn = document.getElementById("reset-history-btn");
+    if (resetHistoryBtn) {
+        resetHistoryBtn.addEventListener("click", async () => {
+            if (confirm("Are you sure you want to reset and delete all local timesheet logs? This action cannot be undone.")) {
+                try {
+                    const res = await fetch("/api/logs/reset", { method: "POST" });
+                    if (res.ok) {
+                        showToast("Local log history has been successfully reset.", "success");
+                        await fetchLogs();
+                        renderActiveView();
+                    } else {
+                        showToast("Failed to clear log history database.", "error");
+                    }
+                } catch (e) {
+                    console.error("Error resetting logs:", e);
+                    showToast("Error clearing logs database.", "error");
+                }
+            }
+        });
+    }
+
     // Modal Close
     closeModalBtn.addEventListener("click", closeModal);
     cancelLogBtn.addEventListener("click", closeModal);
@@ -185,6 +235,16 @@ function setupEventListeners() {
 
     // Save Timesheet Entry
     saveLogBtn.addEventListener("click", saveTimesheetLog);
+
+    // Sidebar Toggle
+    const sidebarToggleBtn = document.getElementById("sidebar-toggle-btn");
+    if (sidebarToggleBtn) {
+        sidebarToggleBtn.addEventListener("click", () => {
+            const container = document.querySelector(".app-container");
+            const isCollapsed = container.classList.toggle("sidebar-collapsed");
+            localStorage.setItem("sidebarCollapsed", isCollapsed);
+        });
+    }
 }
 
 // --- Fetch Configuration & Token Status ---
@@ -237,10 +297,18 @@ async function fetchProjects() {
             projectSelect.appendChild(opt);
         });
         
-        // Default to "All Projects"
-        state.selectedProjectId = "All";
-        viewSubtitle.innerText = "All Projects";
-        await fetchTasks("All");
+        // Default to the first project to load instantly and prevent Zoho API rate limit blocks
+        if (state.projects.length > 0) {
+            const firstProj = state.projects[0];
+            projectSelect.value = firstProj.id;
+            state.selectedProjectId = firstProj.id;
+            viewSubtitle.innerText = firstProj.name;
+            await fetchTasks(firstProj.id);
+        } else {
+            state.selectedProjectId = "All";
+            viewSubtitle.innerText = "All Projects";
+            await fetchTasks("All");
+        }
     } catch (e) {
         console.error("Projects load error:", e);
         projectSelect.innerHTML = '<option value="">Error Loading Projects</option>';
@@ -297,10 +365,15 @@ function updateAssigneeFilterOptions() {
         userFilter.appendChild(opt);
     });
     
-    // Restore selection if still valid, otherwise default to All
+    state.allAssignees = assignees;
+    
+    // Restore selection if still valid, or default to current user if present in assignees, otherwise All
     if (assignees.has(previousSelection)) {
         userFilter.value = previousSelection;
         state.activeAssignee = previousSelection;
+    } else if (state.currentUser && assignees.has(state.currentUser.displayName)) {
+        userFilter.value = state.currentUser.displayName;
+        state.activeAssignee = state.currentUser.displayName;
     } else {
         userFilter.value = "All";
         state.activeAssignee = "All";
@@ -349,28 +422,21 @@ function renderBoardView(filteredTasks) {
     // Clear container
     boardColumnsContainer.innerHTML = "";
     
-    // Extract unique statuses from state.tasks (to show all pipeline columns in this project)
-    let uniqueStatuses = [...new Set(state.tasks.map(t => t.status))];
-    
-    // If there are no tasks, default to standard columns
-    if (uniqueStatuses.length === 0) {
-        uniqueStatuses = ["To Do", "In Progress", "Review", "Done"];
-    } else {
-        // Sort statuses logically
-        const orderHeuristic = (status) => {
-            const s = status.toLowerCase();
-            if (s.includes("open") || s.includes("todo") || s.includes("to do")) return 1;
-            if (s.includes("progress") || s.includes("active") || s.includes("working")) return 2;
-            if (s.includes("review") || s.includes("qa") || s.includes("test")) return 3;
-            if (s.includes("done") || s.includes("close") || s.includes("complete")) return 4;
-            return 5;
-        };
-        uniqueStatuses.sort((a, b) => orderHeuristic(a) - orderHeuristic(b));
-    }
+    // Fixed pipeline statuses format
+    const pipelineStatuses = [
+        "Requirement Clarification",
+        "Scope Analysis",
+        "BRD Approval Pending",
+        "Execution in Progress",
+        "QC",
+        "Client Approval Pending",
+        "Completed",
+        "Not Feasible"
+    ];
     
     // Create columns map for easy task insertion
     const columnsMap = {};
-    uniqueStatuses.forEach(status => {
+    pipelineStatuses.forEach(status => {
         const col = document.createElement("div");
         col.className = "board-column";
         col.dataset.status = status.toLowerCase();
@@ -381,8 +447,8 @@ function renderBoardView(filteredTasks) {
             </div>
             <div class="task-cards-list"></div>
         `;
-        boardColumnsContainer.appendChild(col);
         columnsMap[status.toLowerCase()] = {
+            element: col,
             list: col.querySelector(".task-cards-list"),
             countBadge: col.querySelector(".count"),
             count: 0
@@ -392,7 +458,28 @@ function renderBoardView(filteredTasks) {
     // Populate columns with filtered tasks
     filteredTasks.forEach(task => {
         const statusKey = task.status.toLowerCase();
-        const colMeta = columnsMap[statusKey];
+        let matchedStatusKey = "requirement clarification"; // Default fallback
+        
+        // Fuzzy matching logic to map arbitrary task statuses to fixed pipeline
+        if (statusKey.includes("clarification") || statusKey.includes("requirement") || statusKey.includes("to do") || statusKey.includes("todo") || statusKey.includes("open")) {
+            matchedStatusKey = "requirement clarification";
+        } else if (statusKey.includes("scope") || statusKey.includes("analysis")) {
+            matchedStatusKey = "scope analysis";
+        } else if (statusKey.includes("brd")) {
+            matchedStatusKey = "brd approval pending";
+        } else if (statusKey.includes("execution") || statusKey.includes("progress") || statusKey.includes("active") || statusKey.includes("work")) {
+            matchedStatusKey = "execution in progress";
+        } else if (statusKey.includes("qc") || statusKey.includes("qa") || statusKey.includes("test") || statusKey.includes("review")) {
+            matchedStatusKey = "qc";
+        } else if (statusKey.includes("client")) {
+            matchedStatusKey = "client approval pending";
+        } else if (statusKey.includes("completed") || statusKey.includes("complete") || statusKey.includes("done") || statusKey.includes("close")) {
+            matchedStatusKey = "completed";
+        } else if (statusKey.includes("not feasible") || statusKey.includes("feasible")) {
+            matchedStatusKey = "not feasible";
+        }
+        
+        const colMeta = columnsMap[matchedStatusKey];
         if (!colMeta) return;
         
         const card = document.createElement("div");
@@ -412,6 +499,14 @@ function renderBoardView(filteredTasks) {
         colMeta.list.appendChild(card);
         colMeta.count++;
         colMeta.countBadge.innerText = colMeta.count;
+    });
+
+    // Only append columns that have tasks, keeping the sequence intact
+    pipelineStatuses.forEach(status => {
+        const colMeta = columnsMap[status.toLowerCase()];
+        if (colMeta && colMeta.count > 0) {
+            boardColumnsContainer.appendChild(colMeta.element);
+        }
     });
 }
 
@@ -434,7 +529,7 @@ function renderListView(filteredTasks) {
                 ${task.priority && task.priority !== 'None' ? `<span class="priority-tag ${task.priority.toLowerCase()}" style="margin-left: 8px; font-size: 9.5px; font-weight: 700; padding: 2px 6px; border-radius: 4px; text-transform: uppercase; letter-spacing: 0.3px; display: inline-flex; align-items: center; gap: 4px;"><i class="fa-solid fa-circle-exclamation" style="font-size: 8.5px;"></i> ${task.priority}</span>` : ''}
             </td>
             <td>${task.assignee}</td>
-            <td><span class="status-badge ${task.status.toLowerCase().replace(" ", "-")}">${task.status}</span></td>
+            <td><span class="status-badge ${task.status.toLowerCase().replace(/\s+/g, "-")}">${task.status}</span></td>
             <td class="text-secondary">${task.start_date || 'N/A'} to ${task.end_date || 'N/A'}</td>
             <td style="text-align: right;">
                 <button class="primary-btn btn-sm" onclick="openTimeLogModalById('${task.id}')">
@@ -477,20 +572,34 @@ function renderHistoryLogs() {
         return;
     }
     
-    state.logs.forEach(log => {
+    const historyUserFilter = document.getElementById("history-user-filter");
+    const selectedUser = historyUserFilter ? historyUserFilter.value : "All";
+    
+    let filteredLogs = state.logs;
+    if (selectedUser !== "All") {
+        filteredLogs = state.logs.filter(log => getDisplayName(log.user_email) === selectedUser);
+    }
+    
+    if (filteredLogs.length === 0) {
+        logsBody.innerHTML = `<tr><td colspan="7" style="text-align: center;" class="text-secondary">No logs found for ${selectedUser}.</td></tr>`;
+        return;
+    }
+    
+    filteredLogs.forEach(log => {
         const row = document.createElement("tr");
+        const taskStatusClass = (log.task_status || 'In Progress').toLowerCase().replace(/\s+/g, "-");
         row.innerHTML = `
             <td class="col-project"><strong>${log.project_name || 'Project'}</strong></td>
             <td class="col-task">${log.task_name || 'Task'}</td>
             <td class="col-user"><strong>${getDisplayName(log.user_email)}</strong></td>
             <td class="col-hours"><strong>${log.hours.toFixed(2)} hrs</strong></td>
             <td class="col-type">${log.billable ? '<span class="status-badge done">Billable</span>' : '<span class="status-badge to-do">Non-Billable</span>'}</td>
-            <td class="col-date text-secondary">${new Date(log.logged_at).toLocaleString()}</td>
+            <td class="col-notes text-secondary" title="${log.notes || ''}">${log.notes || '-'}</td>
+            <td class="col-task-status"><span class="status-badge ${taskStatusClass}">${log.task_status || 'In Progress'}</span></td>
             <td class="col-status">
                 <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%;">
-                    <span class="sync-status ${log.status}">
-                        <i class="fa-solid ${log.status === 'Synced' ? 'fa-circle-check' : 'fa-circle-notch fa-spin'}"></i>
-                        ${log.status}
+                    <span class="sync-status ${log.status}" title="${log.status === 'Synced' ? 'Synced to Zoho' : 'Sync Pending'}">
+                        <i class="fa-solid ${log.status === 'Synced' ? 'fa-circle-check' : 'fa-circle-xmark'}" style="font-size: 15px;"></i>
                     </span>
                     ${log.status === 'Pending' ? `
                         <button class="primary-btn btn-sm delete-log-btn" style="background: rgba(239, 22, 22, 0.1); color: #ff4a4a; border: 1px solid rgba(239, 22, 22, 0.2); padding: 4px 8px; border-radius: 6px; cursor: pointer; transition: 0.2s;" onclick="deletePendingLog(${log.id})">
@@ -556,19 +665,29 @@ function openTimeLogModal(task) {
     manualEndInput.value = "";
     logNotes.value = "";
     
-    // Dynamically populate Log As User options based on task assignees
+    // Dynamically populate Log As User options based on task assignees (using loaded task assignees list)
     const logUserSelect = document.getElementById("log-user");
     if (logUserSelect) {
         logUserSelect.innerHTML = "";
-        const allPossibleUsers = ["Gurjeet Kaur", "Vindhya Kesharwani", "Aashay Soni", "Rahul Patel"];
         
-        const assigneesStr = task.assignee || "";
-        const taskAssignees = assigneesStr.split(",")
-            .map(a => a.trim())
-            .filter(a => a && a !== "Unassigned");
-            
-        const validAssignees = taskAssignees.filter(a => allPossibleUsers.includes(a));
-        const finalUsers = validAssignees.length > 0 ? validAssignees : allPossibleUsers;
+        // Real Zoho team members
+        const defaultUsers = ["Gurjeet Kaur", "Vindhya Kesharwani", "Aashay Soni", "Rahul Patel"];
+        let finalUsers = [...defaultUsers];
+        
+        // Add any other assignees found in the tasks dynamically
+        if (state.allAssignees) {
+            state.allAssignees.forEach(user => {
+                if (user && user !== "Unassigned" && !finalUsers.includes(user)) {
+                    finalUsers.push(user);
+                }
+            });
+        }
+        
+        // Add current logged-in user if not in list
+        const currentUserDisplayName = state.currentUser ? state.currentUser.displayName : "";
+        if (currentUserDisplayName && currentUserDisplayName !== "Admin" && !finalUsers.includes(currentUserDisplayName)) {
+            finalUsers.unshift(currentUserDisplayName);
+        }
         
         finalUsers.forEach(user => {
             const opt = document.createElement("option");
@@ -577,7 +696,16 @@ function openTimeLogModal(task) {
             logUserSelect.appendChild(opt);
         });
         
-        logUserSelect.value = finalUsers[0];
+        // Try to default select the clicked task's assignee (automatically match to task assignee)
+        const taskAssignee = task.assignee && task.assignee !== "Unassigned" ? task.assignee.split(",")[0].trim() : "";
+        if (taskAssignee && finalUsers.includes(taskAssignee)) {
+            logUserSelect.value = taskAssignee;
+        } else if (currentUserDisplayName && finalUsers.includes(currentUserDisplayName)) {
+            logUserSelect.value = currentUserDisplayName;
+        } else {
+            logUserSelect.value = finalUsers[0];
+        }
+        logUserSelect.disabled = false;
     }
     
     // Enable/disable buttons
@@ -743,6 +871,8 @@ async function saveTimesheetLog() {
         userEmail = `${selectedUserName.toLowerCase().replace(/\s+/g, "")}@company.com`;
     }
     
+    const taskStatus = document.getElementById("log-task-status").value || "In Progress";
+    
     const project = state.projects.find(p => p.id === state.selectedProjectId);
     const payload = {
         task_id: state.selectedTask.id,
@@ -753,7 +883,8 @@ async function saveTimesheetLog() {
         hours: hours,
         billable: 1,
         rate: 0.0,
-        notes: logNotes.value
+        notes: logNotes.value,
+        task_status: taskStatus
     };
     
     try {
@@ -765,9 +896,16 @@ async function saveTimesheetLog() {
         
         if (!res.ok) throw new Error("Database save failed");
         
-        showToast(`Timesheet entry saved successfully for task: ${state.selectedTask.name}!`, "success");
+        const responseData = await res.json();
+        if (responseData.synced) {
+            showToast(responseData.message || "Logged and synced to Zoho Projects successfully!", "success");
+        } else {
+            showToast(responseData.warning || "Saved locally, but auto-sync to Zoho Projects failed.", "warning");
+        }
+        
         closeModal();
         await fetchLogs();
+        renderActiveView();
         
         // Automatically open history view to see the logged item
         document.querySelector('.nav-item[data-view="history"]').click();

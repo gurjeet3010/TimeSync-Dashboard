@@ -150,7 +150,7 @@ body {
     display: flex;
     flex-direction: column;
     flex-shrink: 0;
-    transition: background-color 0.3s ease, border-color 0.3s ease;
+    transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1), padding 0.3s cubic-bezier(0.4, 0, 0.2, 1), background-color 0.3s ease, border-color 0.3s ease;
 }
 
 .logo {
@@ -208,6 +208,11 @@ select {
     appearance: none;
     cursor: pointer;
     transition: var(--transition-smooth);
+}
+
+select option {
+    background-color: var(--bg-card);
+    color: var(--text-primary);
 }
 
 select:hover {
@@ -603,10 +608,24 @@ button {
     letter-spacing: 0.75px;
 }
 
-.status-badge.to-do { background-color: rgba(189, 217, 191, 0.1); color: var(--todo-color); border: 1px solid rgba(189, 217, 191, 0.15); }
-.status-badge.in-progress { background-color: rgba(255, 200, 87, 0.1); color: var(--inprogress-color); border: 1px solid rgba(255, 200, 87, 0.15); }
-.status-badge.review { background-color: rgba(96, 165, 250, 0.1); color: var(--review-color); border: 1px solid rgba(96, 165, 250, 0.15); }
-.status-badge.done { background-color: rgba(16, 185, 129, 0.1); color: var(--done-color); border: 1px solid rgba(16, 185, 129, 0.15); }
+.status-badge.to-do, .status-badge.requirement-clarification { background-color: rgba(148, 163, 184, 0.15); color: #94a3b8; border: 1px solid rgba(148, 163, 184, 0.25); }
+.status-badge.scope-analysis { background-color: rgba(168, 85, 247, 0.15); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.25); }
+.status-badge.brd-approval-pending { background-color: rgba(245, 158, 11, 0.15); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.25); }
+.status-badge.in-progress, .status-badge.execution-in-progress { background-color: rgba(132, 204, 22, 0.15); color: #a3e635; border: 1px solid rgba(132, 204, 22, 0.25); }
+.status-badge.review, .status-badge.qc { background-color: rgba(59, 130, 246, 0.15); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.25); }
+.status-badge.client-approval-pending { background-color: rgba(249, 115, 22, 0.15); color: #fb923c; border: 1px solid rgba(249, 115, 22, 0.25); }
+.status-badge.done, .status-badge.completed { background-color: rgba(34, 197, 94, 0.15); color: #4ade80; border: 1px solid rgba(34, 197, 94, 0.25); }
+.status-badge.not-feasible { background-color: rgba(239, 68, 68, 0.15); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.25); }
+
+/* light theme overrides */
+.light-theme .status-badge.to-do, .light-theme .status-badge.requirement-clarification { background-color: rgba(71, 85, 105, 0.1); color: #475569; border: 1px solid rgba(71, 85, 105, 0.18); }
+.light-theme .status-badge.scope-analysis { background-color: rgba(109, 40, 217, 0.1); color: #6d28d9; border: 1px solid rgba(109, 40, 217, 0.18); }
+.light-theme .status-badge.brd-approval-pending { background-color: rgba(180, 83, 9, 0.1); color: #b45309; border: 1px solid rgba(180, 83, 9, 0.18); }
+.light-theme .status-badge.in-progress, .light-theme .status-badge.execution-in-progress { background-color: rgba(77, 124, 15, 0.1); color: #4d7c0f; border: 1px solid rgba(77, 124, 15, 0.18); }
+.light-theme .status-badge.review, .light-theme .status-badge.qc { background-color: rgba(29, 78, 216, 0.1); color: #1d4ed8; border: 1px solid rgba(29, 78, 216, 0.18); }
+.light-theme .status-badge.client-approval-pending { background-color: rgba(194, 65, 12, 0.1); color: #c2410c; border: 1px solid rgba(194, 65, 12, 0.18); }
+.light-theme .status-badge.done, .light-theme .status-badge.completed { background-color: rgba(21, 128, 61, 0.1); color: #15803d; border: 1px solid rgba(21, 128, 61, 0.18); }
+.light-theme .status-badge.not-feasible { background-color: rgba(185, 28, 28, 0.1); color: #b91c1c; border: 1px solid rgba(185, 28, 28, 0.18); }
 
 /* Table styling for History */
 .card-header {
@@ -677,7 +696,7 @@ button {
     text-transform: uppercase;
     letter-spacing: 0.5px;
 }
-.sync-status.Pending { color: var(--warning); }
+.sync-status.Pending { color: var(--danger); }
 .sync-status.Synced { color: var(--success); }
 
 /* Timeline Gantt View styling */
@@ -1207,6 +1226,7 @@ input:checked + .slider:before {
     box-sizing: border-box;
     text-align: left;
     border-bottom: 1px solid var(--border-color);
+    vertical-align: middle !important;
 }
 
 .table tr:last-child td {
@@ -1218,17 +1238,90 @@ input:checked + .slider:before {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    vertical-align: middle !important;
+}
+
+/* Allow text wrapping on Project, Task, and Notes columns to show full content */
+.table td.col-project, 
+.table td.col-task,
+.table td.col-notes {
+    white-space: normal;
+    word-break: break-word;
+    text-overflow: clip;
 }
 
 /* Specific Column Widths */
-.col-project { width: 16%; }
+.col-project { width: 22%; }
 .col-task { width: 22%; }
-.col-user { width: 14%; }
-.col-hours { width: 10%; }
-.col-type { width: 10%; }
-.col-date { width: 16%; }
-.col-status { width: 12%; }
+.col-user { width: 12%; }
+.col-hours { width: 8%; }
+.col-type { width: 8%; }
+.col-notes { width: 20%; }
+.col-task-status { width: 12%; }
+.col-status { width: 6%; }
 
 .table-scroll-wrapper {
     scrollbar-gutter: stable;
+}
+
+/* Sidebar Collapse System */
+.sidebar-collapsed .sidebar {
+    width: 78px;
+    padding: 32px 14px;
+}
+.sidebar-collapsed .sidebar-text {
+    display: none !important;
+}
+.sidebar-collapsed .logo {
+    justify-content: center;
+    padding-left: 0;
+    gap: 0;
+}
+.sidebar-collapsed .sidebar-section {
+    display: none !important;
+}
+.sidebar-collapsed .nav-item {
+    justify-content: center;
+    padding: 12px;
+}
+.sidebar-collapsed .nav-item i {
+    font-size: 18px;
+    margin: 0;
+}
+
+/* Responsive Sidebar on Mobile */
+@media (max-width: 768px) {
+    .sidebar {
+        position: fixed;
+        left: 0;
+        top: 0;
+        bottom: 0;
+        z-index: 100;
+        transform: translateX(0);
+        box-shadow: var(--shadow-lg);
+    }
+    
+    .sidebar-collapsed .sidebar {
+        transform: translateX(-100%);
+        width: 270px; /* keep full width when sliding in */
+    }
+    
+    .sidebar-collapsed .sidebar-text {
+        display: block !important; /* show text when sidebar is expanded on mobile */
+    }
+    
+    .sidebar-collapsed .logo {
+        justify-content: flex-start;
+        padding-left: 4px;
+        gap: 12px;
+    }
+    
+    .sidebar-collapsed .nav-item {
+        justify-content: flex-start;
+        padding: 12px 16px;
+    }
+    
+    .sidebar-collapsed .nav-item i {
+        font-size: 15px;
+    }
 }

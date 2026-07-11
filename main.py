@@ -10,11 +10,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 import hashlib
 import json
+from concurrent.futures import ThreadPoolExecutor
 
-# Load env variables from .env file and override existing ones
+# Load env variables from .env file and override existing ones (forced reload v1.1.6)
 load_dotenv(override=True)
 
 app = FastAPI(title="Zoho Projects Timesheet Dashboard")
+
+TASKS_CACHE = {}  # {project_id: (timestamp, tasks_list)}
+CACHE_DURATION = 45  # cache lifetime in seconds
 
 # Enable CORS for development
 app.add_middleware(
@@ -73,6 +77,32 @@ def api_logout():
     response.delete_cookie(key="session_user", path="/")
     return response
 
+@app.get("/api/me")
+def api_me(request: Request):
+    session_user = request.cookies.get("session_user")
+    if not session_user:
+        raise HTTPException(status_code=401, detail="Not logged in")
+    
+    try:
+        with open("users.json", "r") as f:
+            users = json.load(f)
+    except Exception:
+        users = []
+        
+    for u in users:
+        if u.get("username") == session_user:
+            return {
+                "username": u.get("username"),
+                "displayName": u.get("displayName"),
+                "email": u.get("email")
+            }
+            
+    return {
+        "username": session_user,
+        "displayName": session_user.capitalize(),
+        "email": f"{session_user}@company.com"
+    }
+
 DB_PATH = "db.sqlite3"
 
 def init_db():
@@ -91,7 +121,8 @@ def init_db():
             rate REAL DEFAULT 0.0,
             notes TEXT,
             logged_at TEXT DEFAULT CURRENT_TIMESTAMP,
-            status TEXT DEFAULT 'Pending'
+            status TEXT DEFAULT 'Pending',
+            task_status TEXT DEFAULT 'In Progress'
         )
     """)
     cursor.execute("""
@@ -101,6 +132,15 @@ def init_db():
         )
     """)
     conn.commit()
+    
+    # Run migration to add task_status if table already exists without it
+    try:
+        cursor.execute("ALTER TABLE time_logs ADD COLUMN task_status TEXT DEFAULT 'In Progress'")
+        conn.commit()
+    except Exception:
+        # Column already exists
+        pass
+        
     conn.close()
 
 init_db()
@@ -128,6 +168,7 @@ def set_config_value(key: str, value: str):
 
 # --- Zoho OAuth Configuration Helpers ---
 def get_env_value(key: str) -> str:
+    load_dotenv(override=True)
     return os.getenv(key, "")
 
 def get_zoho_domain() -> str:
@@ -174,7 +215,7 @@ def get_access_token():
             pass
             
     # 2. If expired or missing, refresh from Zoho using refresh_token
-    refresh_token = get_env_value("ZOHO_REFRESH_TOKEN")
+    refresh_token = get_config_value("zoho_refresh_token") or get_env_value("ZOHO_REFRESH_TOKEN")
     client_id = get_env_value("ZOHO_CLIENT_ID")
     client_secret = get_env_value("ZOHO_CLIENT_SECRET")
     redirect_uri = get_env_value("ZOHO_REDIRECT_URI")
@@ -231,17 +272,17 @@ MOCK_PROJECTS = [
 
 MOCK_TASKS = {
     "p1": [
-        {"id": "t101", "name": "Design Figma Mockups", "status": "In Progress", "assignee": "Aman", "start_date": "2026-07-01", "end_date": "2026-07-05", "description": "Create high-fidelity mockups for landing page and dashboard. Ensure it has luxury aesthetic.", "priority": "High"},
-        {"id": "t102", "name": "Setup Database Schema", "status": "To Do", "assignee": "Aman", "start_date": "2026-07-03", "end_date": "2026-07-06", "description": "", "priority": "Medium"},
-        {"id": "t103", "name": "Frontend Boilerplate Setup", "status": "Done", "assignee": "Rohan", "start_date": "2026-06-28", "end_date": "2026-06-30", "description": "Initialize react app with vite, setup tailwind CSS, folder structure, router and basic layout.", "priority": "None"},
-        {"id": "t104", "name": "Stripe Payment Gateway Integration", "status": "Review", "assignee": "Aman", "start_date": "2026-07-04", "end_date": "2026-07-08", "description": "", "priority": "High"}
+        {"id": "t101", "name": "Design Figma Mockups", "status": "Execution in Progress", "assignee": "Aman", "start_date": "2026-07-01", "end_date": "2026-07-05", "description": "Create high-fidelity mockups for landing page and dashboard. Ensure it has luxury aesthetic.", "priority": "High"},
+        {"id": "t102", "name": "Setup Database Schema", "status": "Requirement Clarification", "assignee": "Aman", "start_date": "2026-07-03", "end_date": "2026-07-06", "description": "", "priority": "Medium"},
+        {"id": "t103", "name": "Frontend Boilerplate Setup", "status": "Completed", "assignee": "Rohan", "start_date": "2026-06-28", "end_date": "2026-06-30", "description": "Initialize react app with vite, setup tailwind CSS, folder structure, router and basic layout.", "priority": "None"},
+        {"id": "t104", "name": "Stripe Payment Gateway Integration", "status": "QC", "assignee": "Aman", "start_date": "2026-07-04", "end_date": "2026-07-08", "description": "", "priority": "High"}
     ],
     "p2": [
-        {"id": "t201", "name": "Zoho OAuth Configuration", "status": "In Progress", "assignee": "Aman", "start_date": "2026-07-01", "end_date": "2026-07-03", "description": "Setup Zoho console, handle redirection, exchange tokens and implement token refresh callback.", "priority": "Medium"},
-        {"id": "t202", "name": "Sync Timesheets API", "status": "To Do", "assignee": "Rohan", "start_date": "2026-07-02", "end_date": "2026-07-07", "description": "", "priority": "High"}
+        {"id": "t201", "name": "Zoho OAuth Configuration", "status": "Execution in Progress", "assignee": "Aman", "start_date": "2026-07-01", "end_date": "2026-07-03", "description": "Setup Zoho console, handle redirection, exchange tokens and implement token refresh callback.", "priority": "Medium"},
+        {"id": "t202", "name": "Sync Timesheets API", "status": "Requirement Clarification", "assignee": "Rohan", "start_date": "2026-07-02", "end_date": "2026-07-07", "description": "", "priority": "High"}
     ],
     "p3": [
-        {"id": "t301", "name": "SEO & Content Writing", "status": "To Do", "assignee": "Aisha", "start_date": "2026-07-01", "end_date": "2026-07-02", "description": "Optimize content keywords, meta descriptions and run Google Lighthouse audits.", "priority": "Low"}
+        {"id": "t301", "name": "SEO & Content Writing", "status": "Requirement Clarification", "assignee": "Aisha", "start_date": "2026-07-01", "end_date": "2026-07-02", "description": "Optimize content keywords, meta descriptions and run Google Lighthouse audits.", "priority": "Low"}
     ]
 }
 
@@ -331,6 +372,13 @@ def get_tasks(project_id: str = Query(...)):
     if not token:
         raise HTTPException(status_code=401, detail="Zoho not authorized.")
         
+    # Check in-memory cache first to avoid rate-limiting
+    if project_id in TASKS_CACHE:
+        cache_time, cached_tasks = TASKS_CACHE[project_id]
+        if time.time() - cache_time < CACHE_DURATION:
+            print(f"Returning cached tasks for project_id: {project_id}")
+            return cached_tasks
+        
     portal_id = get_portal_id(token)
     if not portal_id:
          raise HTTPException(status_code=400, detail="Unable to fetch Zoho Portal ID.")
@@ -352,20 +400,21 @@ def get_tasks(project_id: str = Query(...)):
     tasks = []
     headers = {"Authorization": f"Zoho-oauthtoken {token}"}
     
-    for pid in project_ids:
+    def fetch_tasks_for_project(pid):
         url = f"https://projectsapi.zoho.{domain}/restapi/portal/{portal_id}/projects/{pid}/tasks/"
         pname = next((p["name"] for p in projects if p["id"] == pid), "Active Project")
         try:
-            res = requests.get(url, headers=headers)
+            res = requests.get(url, headers=headers, timeout=10)
             if res.status_code == 204 or not res.text.strip():
-                continue
+                return []
             res_data = res.json()
+            project_tasks = []
             for t in res_data.get("tasks", []):
                 status_name = t.get("status", {}).get("name", "To Do")
                 
                 custom_assignee = None
                 for cf in t.get("custom_fields", []):
-                    if cf.get("label_name") == "Assigned User" and cf.get("value"):
+                    if cf.get("label_name") in ["Assigned User", "Assigned Users"] and cf.get("value"):
                         custom_assignee = cf.get("value")
                         break
                 
@@ -378,7 +427,7 @@ def get_tasks(project_id: str = Query(...)):
                     elif t.get("details", {}).get("owners"):
                         assignee_name = t["details"]["owners"][0].get("name", "Unassigned")
                     
-                tasks.append({
+                project_tasks.append({
                     "id": str(t["id"]),
                     "name": t["name"],
                     "status": status_name,
@@ -390,10 +439,18 @@ def get_tasks(project_id: str = Query(...)):
                     "project_id": str(pid),
                     "project_name": pname
                 })
+            return project_tasks
         except Exception as e:
             print(f"Failed to fetch Zoho tasks for project {pid}: {str(e)}")
-            continue
+            return []
+
+    with ThreadPoolExecutor(max_workers=15) as executor:
+        results = executor.map(fetch_tasks_for_project, project_ids)
+        for r in results:
+            tasks.extend(r)
             
+    # Cache results
+    TASKS_CACHE[project_id] = (time.time(), tasks)
     return tasks
 
 
@@ -460,6 +517,78 @@ def get_logs():
     conn.close()
     return logs
 
+def sync_single_log_db(log_id: int) -> dict:
+    is_mock = get_env_value("MOCK_MODE") == "True"
+    
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, task_id, project_id, hours, user_email, notes, billable FROM time_logs WHERE id = ?", (log_id,))
+    row = cursor.fetchone()
+    
+    if not row:
+        conn.close()
+        return {"success": False, "error": "Log not found in database"}
+        
+    log_id, task_id, project_id, hours, user_email, notes, billable = row
+    
+    if is_mock:
+        cursor.execute("UPDATE time_logs SET status = 'Synced' WHERE id = ?", (log_id,))
+        conn.commit()
+        conn.close()
+        return {"success": True, "message": "Logged and synced successfully (Mock Mode)"}
+        
+    token = get_access_token()
+    if not token:
+        conn.close()
+        return {"success": False, "error": "Zoho Projects not authorized."}
+        
+    portal_id = get_portal_id(token)
+    if not portal_id:
+        conn.close()
+        return {"success": False, "error": "Unable to fetch Zoho Portal ID."}
+        
+    domain = get_zoho_domain()
+    
+    h = int(hours)
+    m = int((hours - h) * 60)
+    hours_str = f"{h:02d}:{m:02d}"
+    
+    from datetime import datetime
+    date_str = datetime.now().strftime("%m-%d-%Y")
+    
+    display_name = get_display_name(user_email)
+    log_notes = f"[{display_name}] {notes}" if notes else f"[{display_name}] Logged via Dashboard"
+    
+    url = f"https://projectsapi.zoho.{domain}/restapi/portal/{portal_id}/projects/{project_id}/tasks/{task_id}/logs/"
+    headers = {"Authorization": f"Zoho-oauthtoken {token}"}
+    
+    payload = {
+        "date": date_str,
+        "hours": hours_str,
+        "notes": log_notes,
+        "bill_status": "Billable"
+    }
+    
+    import json
+    assigned_user_key = get_env_value("ZOHO_ASSIGNED_USER_FIELD_KEY")
+    if assigned_user_key:
+        payload["custom_fields"] = json.dumps({assigned_user_key: display_name})
+        
+    try:
+        res = requests.post(url, data=payload, headers=headers)
+        print(f"Auto-Sync Log response for log {log_id}: Status {res.status_code}, Body {res.text}")
+        if res.status_code in [200, 201]:
+            cursor.execute("UPDATE time_logs SET status = 'Synced' WHERE id = ?", (log_id,))
+            conn.commit()
+            conn.close()
+            return {"success": True, "message": f"Timesheet entry successfully synced to Zoho Projects for task: {display_name}!"}
+        else:
+            conn.close()
+            return {"success": False, "error": f"Zoho API returned status {res.status_code}: {res.text}"}
+    except Exception as e:
+        conn.close()
+        return {"success": False, "error": str(e)}
+
 @app.post("/api/logs")
 async def create_log(request: Request):
     data = await request.json()
@@ -472,6 +601,7 @@ async def create_log(request: Request):
     billable = int(data.get("billable", True))
     rate = float(data.get("rate", 0.0))
     notes = data.get("notes", "")
+    task_status = data.get("task_status", "In Progress")
 
     if not task_id or hours <= 0:
         raise HTTPException(status_code=400, detail="Invalid log data.")
@@ -483,13 +613,28 @@ async def create_log(request: Request):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("""
-        INSERT INTO time_logs (task_id, task_name, project_id, project_name, user_email, hours, billable, rate, notes, logged_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (task_id, task_name, project_id, project_name, user_email, hours, billable, rate, notes, logged_at_ist))
+        INSERT INTO time_logs (task_id, task_name, project_id, project_name, user_email, hours, billable, rate, notes, logged_at, task_status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (task_id, task_name, project_id, project_name, user_email, hours, billable, rate, notes, logged_at_ist, task_status))
     conn.commit()
+    log_id = cursor.lastrowid
     conn.close()
     
-    return {"status": "success"}
+    # Auto-Sync log to Zoho Projects immediately
+    sync_res = sync_single_log_db(log_id)
+    
+    if sync_res["success"]:
+        return {
+            "status": "success",
+            "synced": True,
+            "message": sync_res["message"]
+        }
+    else:
+        return {
+            "status": "success",
+            "synced": False,
+            "warning": f"Timesheet entry saved locally, but failed to automatically sync to Zoho: {sync_res['error']}"
+        }
 
 @app.post("/api/logs/delete/{log_id}")
 def delete_log(log_id: int):
@@ -499,6 +644,15 @@ def delete_log(log_id: int):
     conn.commit()
     conn.close()
     return {"status": "success"}
+
+@app.post("/api/logs/reset")
+def reset_logs():
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM time_logs")
+    conn.commit()
+    conn.close()
+    return {"status": "success", "message": "All local log history cleared."}
 
 def get_display_name(email: str) -> str:
     email_lower = email.lower() if email else ""
@@ -573,7 +727,6 @@ def sync_logs():
                 "bill_status": "Billable"
             }
             
-            # Map Assigned User to Zoho Custom Field if configured in .env
             import json
             assigned_user_key = get_env_value("ZOHO_ASSIGNED_USER_FIELD_KEY")
             if assigned_user_key:
@@ -650,6 +803,7 @@ def oauth_callback(code: str = None, error: str = None):
         
         if "refresh_token" in data:
             update_env_file("ZOHO_REFRESH_TOKEN", data["refresh_token"])
+            set_config_value("zoho_refresh_token", data["refresh_token"])
             if "access_token" in data:
                 access_token = data["access_token"]
                 expires_in = data.get("expires_in", 3600)
