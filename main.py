@@ -767,7 +767,7 @@ def authorize_zoho():
     
     return RedirectResponse(url)
 
-@app.get("/callback")
+@app.get("/auth/callback")
 def oauth_callback(code: str = None, error: str = None):
     if error:
         return HTMLResponse(f"<h3>OAuth Error: {error}</h3>")
@@ -836,4 +836,4 @@ os.makedirs("static", exist_ok=True)
 app.mount("/", StaticFiles(directory="static", html=True), name="static")
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)
+    uvicorn.run("main:app", host="127.0.0.1", port=3000, reload=True)

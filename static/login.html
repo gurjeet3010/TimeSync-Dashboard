@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Nexora Automation - Sign In</title>
+    <title>TimeSync Dashboard - Sign In</title>
     <!-- Google Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -146,6 +146,31 @@
             transform: translateY(0);
         }
 
+        .demo-btn {
+            width: 100%;
+            background-color: transparent;
+            color: var(--text-main);
+            border: 1px solid var(--border-subtle);
+            border-radius: 8px;
+            padding: 14px;
+            font-size: 13px;
+            font-family: 'Outfit', sans-serif;
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin-top: 12px;
+            box-sizing: border-box;
+            text-align: center;
+        }
+
+        .demo-btn:hover {
+            background-color: rgba(255, 255, 255, 0.05);
+            border-color: var(--accent);
+            color: #ffffff;
+        }
+
         .error-message {
             color: #e5989b;
             font-size: 13px;
@@ -174,8 +199,8 @@
 <body>
     <div class="container">
         <div class="header">
-            <div class="brand-logo">NEXORA</div>
-            <h1>Automation</h1>
+            <div class="brand-logo">TIMESYNC</div>
+            <h1>Dashboard</h1>
             <p>Timesheet Sync Portal</p>
         </div>
 
@@ -193,10 +218,11 @@
             </div>
 
             <button type="submit" class="submit-btn">Sign In</button>
+            <button type="button" id="demo-btn" class="demo-btn">Demo Sign In</button>
         </form>
 
         <div class="footer">
-            Nexora Automation &copy; 2026
+            TimeSync Dashboard &copy; 2026
         </div>
     </div>
 
@@ -228,6 +254,12 @@
                 errorBox.innerText = 'Failed to connect to the server.';
                 errorBox.style.display = 'block';
             }
+        });
+
+        document.getElementById('demo-btn').addEventListener('click', () => {
+            document.getElementById('username').value = 'admin';
+            document.getElementById('password').value = 'admin123';
+            document.getElementById('login-form').dispatchEvent(new Event('submit'));
         });
     </script>
 </body>
